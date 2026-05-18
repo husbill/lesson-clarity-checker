@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson Clarity Checker</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,700;1,9..144,400&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #f4f1eb; }
+    body { font-family: 'Outfit', sans-serif; color: #1c2217; }
+    #root { height: 100%; }
+    @keyframes waveBar   { from { transform: scaleY(0.3) } to { transform: scaleY(1) } }
+    @keyframes pulseRing { 0% { opacity:.55; transform:scale(0.88) } 100% { opacity:0; transform:scale(1.45) } }
+    @keyframes fadeUp    { from { opacity:0; transform:translateY(14px) } to { opacity:1; transform:translateY(0) } }
+    @keyframes bnc       { 0%,60%,100% { transform:translateY(0) } 30% { transform:translateY(-5px); background:#2d6a4f } }
+    @keyframes spin      { to { transform: rotate(360deg) } }
+    .msgs-area::-webkit-scrollbar       { width: 4px }
+    .msgs-area::-webkit-scrollbar-track { background: transparent }
+    .msgs-area::-webkit-scrollbar-thumb { background: #ddd8cf; border-radius: 4px }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useRef, useEffect } = React;
+
+// ── PASTE YOUR APPS SCRIPT URL BELOW ────────────────────────────────────────
+const VALIDATOR_URL = "https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec";
+// ────────────────────────────────────────────────────────────────────────────
+
+const GRADE_LEVELS = [
+  { id:"nursery",    label:"Nursery (Ages 3–5)",    persona:"a 4-year-old nursery pupil who is very easily confused, uses simple words only, and gets distracted easily" },
+  { id:"primary13",  label:"Primary 1–3 (Ages 6–8)", persona:"an 8-year-old primary school pupil who understands basic ideas but gets confused by big words and abstract concepts" },
+  { id:"primary46",  label:"Primary 4–6 (Ages 9–11)",persona:"a 10-year-old primary pupil who can follow explanations but struggles when examples are missing or steps are skipped" },
+  { id:"jss",        label:"JSS 1–3 (Ages 12–14)",  persona:"a 13-year-old junior secondary student who is curious but loses track when explanations are too fast or too technical" },
+  { id:"sss",        label:"SSS 1–3 (Ages 15–17)",  persona:"a 16-year-old senior secondary student who can handle complexity but questions vague definitions and wants real-world connections" },
+  { id:"university", label:"University / Adult",     persona:"a first-year university student who thinks critically, pushes back on unclear logic, and asks for precision and evidence" },
+];
+
+const SUBJECTS = ["Mathematics","English Language","Science","Biology","Chemistry","Physics","Geography","History","Civic Education","Economics","Computer Studies","Agricultural Science","Other"];
+
+const makeStudentPrompt = (grade, subject, topic) =>
+  `You are ${grade.persona}. Your teacher is explaining "${topic}" in ${subject}.
+Respond ONLY as this real student would. Rules:
+- Keep responses to 1-3 sentences MAX
+- Ask what a confused student at this level would genuinely ask
+- Sometimes misunderstand a word: "What does ___ mean?"
+- Sometimes reveal a misconception: "But I thought..."
+- Sometimes ask for an example: "Can you show me one?"
+- NEVER give coaching feedback. Just be the student.
+- Your name is Sam if asked.`;
+
+const makeReportPrompt = (grade, subject, topic) =>
+  `You are an expert teacher trainer. Analyze this teaching session.
+Context: Teacher explained "${topic}" (${subject}) to ${grade.persona}.
+Return ONLY this format — no extra text:
+SCORE:[0-100]
+SUMMARY:[2 sentences overall assessment]
+CONFUSION:
+- [confusion point and why]
+- [confusion point and why]
+- [confusion point and why]
+STRENGTHS:
+- [specific strength]
+- [specific strength]
+GRADE_FIT:[appropriate / somewhat appropriate / not appropriate] — [one sentence]
+IMPROVED:[Rewrite teacher's first explanation — clearer, more age-appropriate, more engaging]
+TIP_1:[Concrete actionable tip]
+TIP_2:[Concrete actionable tip]`;
+
+// ── Waveform bars ────────────────────────────────────────────────────────────
+function WaveBars({ active, color="#2d6a4f", count=28 }) {
+  const heights = useRef(Array.from({ length:count }, (_,i) => 8 + Math.abs(Math.sin(i*0.7))*20));
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:3, height:44 }}>
+      {heights.current.map((h,i) => (
+        <div key={i} style={{
+          width:3, borderRadius:4,
+          background: active ? color : "#ddd8cf",
+          height: active ? h : 6,
+          animation: active ? `waveBar ${0.45+(i%7)*0.09}s ease-in-out ${i*0.035}s infinite alternate` : "none",
+          transition:"height 0.25s, background 0.25s",
+        }} />
+      ))}
+    </div>
+  );
+}
+
+// ── Access Gate ──────────────────────────────────────────────────────────────
+function AccessGate({ onUnlock }) {
+  const [code, setCode]     = useState("");
+  const [status, setStatus] = useState("idle");
+  const [errMsg, setErrMsg] = useState("");
+
+  const check = async () => {
+    const trimmed = code.trim().toUpperCase();
+    if (!trimmed) return;
+    setStatus("checking"); setErrMsg("");
+    try {
+      const res  = await fetch(VALIDATOR_URL, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ code: trimmed }),
+      });
+      const data = await res.json();
+      if (data.valid) {
+        sessionStorage.setItem("lcc_unlocked","1");
+        sessionStorage.setItem("lcc_name", data.name || "Teacher");
+        onUnlock(data.name || "Teacher");
+      } else {
+        setStatus("error");
+        setErrMsg(data.reason === "revoked"
+          ? "This code has been deactivated. Please contact support."
+          : "Invalid code. Check your purchase email and try again.");
+      }
+    } catch (_) {
+      setStatus("error");
+      setErrMsg("Connection error. Check your internet and try again.");
+    }
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#f4f1eb", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+      <div style={{ background:"#fff", borderRadius:18, padding:"40px 32px", maxWidth:380, width:"100%", border:"1.5px solid #e8e2d8", textAlign:"center", boxShadow:"0 8px 32px #0000000a" }}>
+        <div style={{ fontSize:38, marginBottom:12 }}>🎓</div>
+        <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:22, fontWeight:700, color:"#1c2217", marginBottom:6 }}>Lesson Clarity Checker</h2>
+        <p style={{ fontSize:13.5, color:"#6b7c6a", marginBottom:24, lineHeight:1.7 }}>Enter your personal access code.<br/>Check your purchase email if you don't have it.</p>
+        <input
+          value={code} placeholder="e.g. LCC-A7X2KQ"
+          onChange={e => { setCode(e.target.value); setStatus("idle"); }}
+          onKeyDown={e => e.key==="Enter" && status!=="checking" && check()}
+          disabled={status==="checking"}
+          style={{ width:"100%", background:status==="error"?"#fff1f1":"#f8f6f2", border:`1.5px solid ${status==="error"?"#fca5a5":"#ddd8cf"}`, borderRadius:10, padding:"11px 14px", fontSize:15, fontFamily:"'Outfit',sans-serif", outline:"none", textAlign:"center", letterSpacing:3, textTransform:"uppercase", marginBottom:10 }}
+        />
+        {status==="error" && <p style={{ fontSize:12.5, color:"#ef4444", marginBottom:10, lineHeight:1.6 }}>{errMsg}</p>}
+        <button onClick={check} disabled={!code.trim()||status==="checking"}
+          style={{ width:"100%", background:"#2d6a4f", color:"#fff", border:"none", borderRadius:10, padding:12, fontSize:14.5, fontFamily:"'Outfit',sans-serif", fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8, opacity:!code.trim()||status==="checking"?0.6:1 }}>
+          {status==="checking"
+            ? <><span style={{ width:14, height:14, border:"2px solid #ffffff88", borderTopColor:"#fff", borderRadius:"50%", display:"inline-block", animation:"spin .7s linear infinite" }} />Checking…</>
+            : "Unlock →"}
+        </button>
+        <p style={{ fontSize:11.5, color:"#bbb5aa", marginTop:18 }}>
+          Don't have access?{" "}
+          <a href="https://selar.co/YOUR-PRODUCT-LINK" target="_blank" rel="noreferrer" style={{ color:"#2d6a4f", fontWeight:600, textDecoration:"none" }}>Get it here →</a>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Report Section ───────────────────────────────────────────────────────────
+function Section({ title, color, delay, children }) {
+  return (
+    <div style={{ background:"#fff", borderRadius:14, padding:"18px 20px", border:"1.5px solid #e8e2d8", marginBottom:14, animation:`fadeUp .4s ease ${delay} both` }}>
+      <div style={{ fontSize:13, fontWeight:700, color, marginBottom:12 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+// ── Main App ─────────────────────────────────────────────────────────────────
+function LessonClarityChecker() {
+  const [screen, setScreen]           = useState("setup");
+  const [subject, setSubject]         = useState("");
+  const [customSubject, setCustomSub] = useState("");
+  const [topic, setTopic]             = useState("");
+  const [gradeId, setGradeId]         = useState("");
+  const [studentVoice, setStudentVoice] = useState(false);
+  const [voiceReady, setVoiceReady]   = useState(false);
+  const [messages, setMessages]       = useState([]);
+  const [input, setInput]             = useState("");
+  const [loading, setLoading]         = useState(false);
+  const [teacherMode, setTeacherMode]           = useState("text");
+  const [teacherListening, setTeacherListening] = useState(false);
+  const [teacherTranscript, setTeacherTranscript] = useState("");
+  const [teacherSpeaking, setTeacherSpeaking]   = useState(false);
+  const [micError, setMicError]       = useState("");
+  const [report, setReport]           = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [scoreAnim, setScoreAnim]     = useState(0);
+
+  const bottomRef        = useRef(null);
+  const recognitionRef   = useRef(null);
+  const shouldRestartRef = useRef(false);
+
+  const grade        = GRADE_LEVELS.find(g => g.id === gradeId);
+  const finalSubject = subject === "Other" ? customSubject : subject;
+  const canStart     = finalSubject.trim() && topic.trim() && gradeId;
+
+  useEffect(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR && window.speechSynthesis) setVoiceReady(true);
+  }, []);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, loading]);
+
+  useEffect(() => {
+    if (report) {
+      let v = 0; const target = report.score;
+      const tick = () => { v = Math.min(v+2, target); setScoreAnim(v); if (v < target) requestAnimationFrame(tick); };
+      setTimeout(() => requestAnimationFrame(tick), 400);
+    }
+  }, [report]);
+
+  const speakStudent = (text) => {
+    if (!window.speechSynthesis || !studentVoice) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate=1.05; u.pitch=1.25;
+    const voices = window.speechSynthesis.getVoices();
+    const v = voices.find(v=>/Google UK English|Daniel|Alex/.test(v.name)) || voices.find(v=>v.lang.startsWith("en"));
+    if (v) u.voice = v;
+    u.onstart=()=>setTeacherSpeaking(true); u.onend=()=>setTeacherSpeaking(false); u.onerror=()=>setTeacherSpeaking(false);
+    window.speechSynthesis.speak(u);
+  };
+  const stopStudentVoice = () => { window.speechSynthesis?.cancel(); setTeacherSpeaking(false); };
+
+  const startTeacherListening = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { setMicError("Speech recognition not supported. Please use Chrome."); return; }
+    setMicError(""); stopStudentVoice();
+    shouldRestartRef.current = true;
+    setTeacherListening(true); setTeacherTranscript("");
+
+    const startSegment = () => {
+      if (!shouldRestartRef.current) return;
+      try {
+        const r = new SR();
+        r.lang="en-US"; r.continuous=false; r.interimResults=true;
+        r.onresult = (e) => {
+          let final="", interim="";
+          for (let i=e.resultIndex; i<e.results.length; i++) {
+            if (e.results[i].isFinal) final += e.results[i][0].transcript;
+            else interim += e.results[i][0].transcript;
+          }
+          if (final) { setInput(prev=>(prev?prev+" ":"")+final.trim()); setTeacherTranscript(""); }
+          else setTeacherTranscript(interim);
+        };
+        r.onerror = (e) => {
+          if (e.error==="no-speech"||e.error==="aborted") return;
+          shouldRestartRef.current=false; setTeacherListening(false);
+          if (e.error==="not-allowed")
+            setMicError("Microphone blocked. Click the 🔒 lock icon in your browser address bar → allow Microphone → try again.");
+          else setMicError(`Mic error: "${e.error}". Please try again.`);
+        };
+        r.onend = () => { if (shouldRestartRef.current) setTimeout(startSegment, 120); else setTeacherListening(false); };
+        recognitionRef.current = r; r.start();
+      } catch (err) {
+        setMicError("Could not start microphone. Refresh the page and try again.");
+        setTeacherListening(false); shouldRestartRef.current=false;
+      }
+    };
+    startSegment();
+  };
+
+  const stopTeacherListening = () => {
+    shouldRestartRef.current=false;
+    try { recognitionRef.current?.stop(); } catch(_){}
+    setTeacherListening(false); setTeacherTranscript("");
+  };
+
+  const sendMessage = async (override) => {
+    const text = (override||input).trim();
+    if (!text||loading) return;
+    setInput(""); setTeacherTranscript(""); setLoading(true); stopStudentVoice();
+    if (teacherListening) stopTeacherListening();
+    const newMsgs = [...messages, {role:"user", text}];
+    setMessages(newMsgs);
+    const apiMsgs = newMsgs.map(m=>({role:m.role==="user"?"user":"assistant", content:m.text}));
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:200, system:makeStudentPrompt(grade, finalSubject, topic), messages:apiMsgs }),
+      });
+      const data = await res.json();
+      const reply = data.content?.[0]?.text || "Hmm...";
+      setMessages(p=>[...p,{role:"assistant", text:reply}]);
+      if (studentVoice) speakStudent(reply);
+    } catch { setMessages(p=>[...p,{role:"assistant", text:"I'm confused..."}]); }
+    setLoading(false);
+  };
+
+  const getReport = async () => {
+    if (messages.length<2) return;
+    setReportLoading(true);
+    const sessionText = messages.map(m=>`${m.role==="user"?"TEACHER":"STUDENT"}: ${m.text}`).join("\n");
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, system:makeReportPrompt(grade, finalSubject, topic), messages:[{role:"user",content:sessionText}] }),
+      });
+      const data = await res.json();
+      const raw  = data.content?.[0]?.text || "";
+      const get  = (key) => { const m=raw.match(new RegExp(`${key}:([^\\n]*)`)); return m?m[1].trim():""; };
+      const getList = (key) => { const m=raw.match(new RegExp(`${key}:[\\s\\S]*?(?=\\n[A-Z_]+:|$)`)); if(!m)return[]; return m[0].split("\n").slice(1).map(l=>l.replace(/^-\s*/,"").trim()).filter(Boolean); };
+      setReport({ score:Math.min(100,Math.max(0,parseInt(get("SCORE"))||70)), summary:get("SUMMARY"), confusion:getList("CONFUSION"), strengths:getList("STRENGTHS"), gradeFit:get("GRADE_FIT"), improved:get("IMPROVED"), tip1:get("TIP_1"), tip2:get("TIP_2") });
+      setScreen("report");
+    } catch { alert("Could not generate report. Please try again."); }
+    setReportLoading(false);
+  };
+
+  const exportPDF = () => {
+    if (!report) return;
+    const date = new Date().toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"});
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Clarity Report</title>
+<style>body{font-family:Georgia,serif;max-width:680px;margin:0 auto;padding:48px 40px;color:#1a1a1a}h2{font-size:15px;color:#2d6a4f;border-bottom:2px solid #2d6a4f;padding-bottom:4px;margin:26px 0 10px}.score{text-align:center;margin:24px 0;padding:20px;border:2px solid #2d6a4f;border-radius:12px}.sn{font-size:52px;font-weight:700;color:#2d6a4f}.sum{font-size:14px;line-height:1.8;background:#f0fdf4;padding:12px;border-left:4px solid #2d6a4f}ul{padding-left:18px}li{font-size:13.5px;line-height:1.8;margin-bottom:3px}.imp{font-style:italic;background:#fffdf0;border-left:4px solid #f59e0b;padding:12px;font-size:13.5px;line-height:1.8}.tip{background:#f0fdf4;padding:10px;margin:8px 0;font-size:13px}.msg{margin:6px 0;font-size:13px;line-height:1.7}.t{color:#1a5c3a}.s{color:#555;font-style:italic}</style></head>
+<body><h1>Lesson Clarity Report</h1><p style="font-size:12px;color:#999">${finalSubject} · ${topic} · ${grade?.label} · ${date}</p>
+<div class="score"><div class="sn">${report.score}</div><div>Clarity Score / 100</div></div>
+<div class="sum">${report.summary}</div>
+<h2>Where Students Got Lost</h2><ul>${report.confusion.map(c=>`<li>${c}</li>`).join("")}</ul>
+<h2>What You Did Well</h2><ul>${report.strengths.map(s=>`<li>${s}</li>`).join("")}</ul>
+<h2>Grade Level Fit</h2><p>${report.gradeFit}</p>
+<h2>Improved Explanation</h2><div class="imp">${report.improved}</div>
+<h2>Tips</h2><div class="tip"><b>1.</b> ${report.tip1}</div><div class="tip"><b>2.</b> ${report.tip2}</div>
+<h2>Transcript</h2>${messages.map(m=>`<div class="msg ${m.role==="user"?"t":"s"}"><b>${m.role==="user"?"Teacher":"Sam"}:</b> ${m.text}</div>`).join("")}
+</body></html>`;
+    const w = window.open("","_blank"); if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
+  };
+
+  const circumference = 2*Math.PI*54;
+  const scoreColor = s => s>=80?"#22c55e":s>=60?"#f59e0b":"#ef4444";
+  const scoreLabel = s => s>=80?"Clear & Engaging":s>=60?"Getting There":s>=40?"Needs Work":"Hard to Follow";
+
+  // ── SETUP SCREEN ────────────────────────────────────────────────────────────
+  if (screen==="setup") return (
+    <div style={{ maxWidth:560, margin:"0 auto", padding:"52px 22px 60px", display:"flex", flexDirection:"column", alignItems:"center" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:32 }}>
+        <div style={{ width:44, height:44, background:"#2d6a4f", borderRadius:13, display:"flex", alignItems:"center", justifyContent:"center", fontSize:21, boxShadow:"0 6px 20px #2d6a4f30" }}>🎓</div>
+        <span style={{ fontFamily:"'Fraunces',serif", fontWeight:700, fontSize:16, color:"#2d6a4f" }}>Lesson Clarity Checker</span>
+      </div>
+      <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:"clamp(1.9rem,4.5vw,2.6rem)", fontWeight:700, textAlign:"center", lineHeight:1.18 }}>
+        Teach it. Hear how a <em style={{ fontStyle:"italic", color:"#2d6a4f" }}>real student</em> responds.
+      </h1>
+      <p style={{ fontSize:14, color:"#6b7c6a", textAlign:"center", marginTop:12, maxWidth:420, lineHeight:1.85, fontWeight:300 }}>
+        Speak or type your lesson. An AI student at your chosen grade level responds honestly.
+      </p>
+      {voiceReady && (
+        <div style={{ display:"flex", alignItems:"center", gap:7, marginTop:16, background:"#eef5f1", border:"1.5px solid #b7d8c5", borderRadius:100, padding:"5px 14px", fontSize:12, color:"#2d6a4f", fontWeight:600 }}>
+          🎙 Voice mode available — speak your explanations
+        </div>
+      )}
+      <div style={{ width:"100%", marginTop:32, display:"flex", flexDirection:"column", gap:15 }}>
+        {[
+          ["Subject", <select value={subject} onChange={e=>setSubject(e.target.value)} style={sel(subject)}>
+            <option value="">Choose subject…</option>{SUBJECTS.map(s=><option key={s}>{s}</option>)}
+          </select>],
+          subject==="Other" && ["Custom Subject", <input placeholder="e.g. Yoruba Language…" value={customSubject} onChange={e=>setCustomSub(e.target.value)} style={inp()} />],
+          ["Topic / Concept", <input placeholder="e.g. Photosynthesis, Long Division…" value={topic} onChange={e=>setTopic(e.target.value)} style={inp()} />],
+          ["Grade Level", <select value={gradeId} onChange={e=>setGradeId(e.target.value)} style={sel(gradeId)}>
+            <option value="">Choose grade…</option>{GRADE_LEVELS.map(g=><option key={g.id} value={g.id}>{g.label}</option>)}
+          </select>],
+        ].filter(Boolean).map(([label, el], i) => (
+          <div key={i}>
+            <label style={{ fontSize:11, fontWeight:700, letterSpacing:"1.5px", textTransform:"uppercase", color:"#9ba89a", marginBottom:5, display:"block" }}>{label}</label>
+            {el}
+          </div>
+        ))}
+        {voiceReady && (
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", background:"#fff", border:"1.5px solid #ddd8cf", borderRadius:10, padding:"12px 16px" }}>
+            <div>
+              <div style={{ fontSize:13.5, fontWeight:500 }}>Student reads replies aloud</div>
+              <div style={{ fontSize:11.5, color:"#9ba89a", marginTop:2 }}>Sam's voice plays after each response</div>
+            </div>
+            <button onClick={()=>setStudentVoice(v=>!v)} style={{ width:42, height:23, background:studentVoice?"#2d6a4f":"#ddd8cf", borderRadius:100, position:"relative", cursor:"pointer", transition:"background .25s", border:"none", flexShrink:0 }}>
+              <div style={{ width:17, height:17, background:"#fff", borderRadius:"50%", position:"absolute", top:3, left:studentVoice?22:3, transition:"left .25s", boxShadow:"0 1px 3px #0002" }} />
+            </button>
+          </div>
+        )}
+        <button disabled={!canStart} onClick={()=>setScreen("chat")}
+          style={{ background:canStart?"#2d6a4f":"#ccc", color:"#fff", border:"none", borderRadius:12, padding:15, fontSize:15, fontFamily:"'Outfit',sans-serif", fontWeight:600, cursor:canStart?"pointer":"not-allowed", marginTop:4 }}>
+          {canStart?"Start Practice Session →":"Fill in all fields to begin"}
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── CHAT SCREEN ─────────────────────────────────────────────────────────────
+  if (screen==="chat") return (
+    <div style={{ display:"flex", flexDirection:"column", height:"100vh", maxWidth:720, margin:"0 auto" }}>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 14px", borderBottom:"1.5px solid #e8e2d8", background:"#f4f1eb" }}>
+        <button onClick={()=>{stopStudentVoice();setMessages([]);setScreen("setup");}} style={bbtn()}>← Back</button>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:13, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{finalSubject}: {topic}</div>
+          <div style={{ fontSize:11, color:"#9ba89a" }}>{grade?.label}</div>
+        </div>
+        <div style={{ display:"flex", gap:7, alignItems:"center" }}>
+          {voiceReady && (
+            <button title={studentVoice?"Student voice ON":"Student voice OFF"} onClick={()=>{setStudentVoice(v=>!v);stopStudentVoice();}}
+              style={{ width:32, height:32, border:`1.5px solid ${studentVoice?"#2d6a4f":"#ddd8cf"}`, background:studentVoice?"#eef5f1":"none", borderRadius:7, cursor:"pointer", fontSize:13, display:"flex", alignItems:"center", justifyContent:"center", color:studentVoice?"#2d6a4f":"#aaa" }}>
+              {studentVoice?"🔊":"🔇"}
+            </button>
+          )}
+          <button disabled={messages.length<2||reportLoading} onClick={getReport}
+            style={{ background:"#2d6a4f", color:"#fff", border:"none", padding:"7px 13px", borderRadius:8, cursor:messages.length>=2?"pointer":"not-allowed", fontSize:12, fontFamily:"'Outfit',sans-serif", fontWeight:600, whiteSpace:"nowrap", opacity:messages.length<2?0.45:1 }}>
+            {reportLoading?"Analysing…":"Get Report →"}
+          </button>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div className="msgs-area" style={{ flex:1, overflowY:"auto", padding:"18px 14px", display:"flex", flexDirection:"column", gap:14 }}>
+        {messages.length===0 && (
+          <div style={{ textAlign:"center", padding:"32px 20px", color:"#9ba89a", fontSize:13.5, lineHeight:1.8 }}>
+            <div style={{ fontSize:28, marginBottom:8 }}>🎤</div>
+            <div style={{ fontWeight:600, color:"#6b7c6a", marginBottom:4 }}>Ready when you are</div>
+            <div>{voiceReady?"Tap the microphone to speak your explanation, or type it below.":"Type your explanation below to begin."}</div>
+          </div>
+        )}
+        {messages.map((m,i)=>(
+          <div key={i} style={{ display:"flex", flexDirection:"column", gap:4, alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
+            <div style={{ fontSize:10, fontWeight:700, letterSpacing:"1.5px", textTransform:"uppercase", color:"#bbb5aa", padding:"0 3px" }}>{m.role==="user"?"You (Teacher)":"Sam (Student)"}</div>
+            {m.role==="assistant" ? (
+              <div style={{ display:"flex", alignItems:"flex-end", gap:8 }}>
+                <div style={{ width:28, height:28, background:"#fef3c7", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, flexShrink:0 }}>🧒</div>
+                <div style={{ maxWidth:"83%", padding:"11px 15px", borderRadius:"15px 15px 15px 3px", background:"#fff", border:"1.5px solid #e8e2d8", color:"#3a4a38", fontSize:14, lineHeight:1.7, fontStyle:"italic" }}>{m.text}</div>
+              </div>
+            ) : (
+              <div style={{ maxWidth:"83%", padding:"11px 15px", borderRadius:"15px 15px 3px 15px", background:"#2d6a4f", color:"#fff", fontSize:14, lineHeight:1.7 }}>{m.text}</div>
+            )}
+          </div>
+        ))}
+        {loading && (
+          <div style={{ display:"flex", alignItems:"flex-end", gap:8 }}>
+            <div style={{ width:28, height:28, background:"#fef3c7", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14 }}>🧒</div>
+            <div style={{ padding:"11px 15px", borderRadius:"15px 15px 15px 3px", background:"#fff", border:"1.5px solid #e8e2d8" }}>
+              <div style={{ display:"flex", gap:4 }}>{[0,1,2].map(i=><span key={i} style={{ width:6, height:6, background:"#ddd8cf", borderRadius:"50%", display:"block", animation:`bnc 1.2s ${i*.2}s infinite` }}/>)}</div>
+            </div>
+          </div>
+        )}
+        {teacherSpeaking && (
+          <div style={{ display:"flex", alignItems:"center", gap:8, paddingLeft:36 }}>
+            <WaveBars active={true} color="#f59e0b" count={16}/>
+            <span style={{ fontSize:11, color:"#f59e0b", fontWeight:600 }}>Sam is speaking…</span>
+            <button onClick={stopStudentVoice} style={{ background:"none", border:"none", fontSize:11, color:"#9ba89a", cursor:"pointer", fontFamily:"'Outfit',sans-serif" }}>stop</button>
+          </div>
+        )}
+        <div ref={bottomRef}/>
+      </div>
+
+      {/* Hint bar */}
+      <div style={{ background:"#eef5f1", borderTop:"1.5px solid #d5e8db", padding:"6px 14px", fontSize:12, color:"#6b7c6a", textAlign:"center" }}>
+        {messages.length===0?"Start by explaining the topic as you would in class 👇":`${messages.filter(m=>m.role==="user").length} explanation(s) given · Hit "Get Report" when done`}
+      </div>
+
+      {/* Input area */}
+      <div style={{ padding:"12px 14px 14px", borderTop:"1.5px solid #e8e2d8", background:"#f4f1eb" }}>
+        {voiceReady && (
+          <div style={{ display:"flex", gap:6, marginBottom:10, background:"#fff", border:"1.5px solid #e8e2d8", borderRadius:9, padding:3, width:"fit-content" }}>
+            {[["text","⌨️ Type"],["voice","🎙 Speak"]].map(([mode,label])=>(
+              <button key={mode} onClick={()=>{setTeacherMode(mode);if(teacherListening)stopTeacherListening();}}
+                style={{ padding:"5px 14px", borderRadius:7, border:"none", background:teacherMode===mode?"#2d6a4f":"transparent", color:teacherMode===mode?"#fff":"#9ba89a", fontFamily:"'Outfit',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer", transition:"all .2s" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Text mode */}
+        {teacherMode==="text" && (
+          <div style={{ display:"flex", gap:8, alignItems:"flex-end" }}>
+            <textarea rows={2} value={input} onChange={e=>setInput(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}}
+              placeholder="Type your explanation here… (Enter to send)"
+              style={{ flex:1, background:"#fff", border:"1.5px solid #ddd8cf", borderRadius:11, padding:"10px 14px", fontSize:14, fontFamily:"'Outfit',sans-serif", color:"#1c2217", outline:"none", lineHeight:1.6, resize:"none" }}/>
+            <button disabled={!input.trim()||loading} onClick={()=>sendMessage()}
+              style={{ background:"#2d6a4f", color:"#fff", border:"none", borderRadius:11, width:42, height:42, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, cursor:input.trim()&&!loading?"pointer":"not-allowed", opacity:input.trim()&&!loading?1:0.35, flexShrink:0 }}>↑</button>
+          </div>
+        )}
+
+        {/* Voice mode */}
+        {teacherMode==="voice" && (
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
+            {micError && (
+              <div style={{ width:"100%", background:"#fff1f1", border:"1.5px solid #fca5a5", borderRadius:10, padding:"10px 14px", fontSize:12.5, color:"#b91c1c", lineHeight:1.6 }}>
+                ⚠️ {micError}
+                <button onClick={()=>setMicError("")} style={{ float:"right", background:"none", border:"none", cursor:"pointer", color:"#b91c1c", fontWeight:700, fontSize:14 }}>×</button>
+              </div>
+            )}
+            <div style={{ width:"100%", background:"#fff", border:`1.5px solid ${teacherListening?"#b7d8c5":"#e8e2d8"}`, borderRadius:12, padding:"12px 16px", minHeight:60, display:"flex", alignItems:"center", justifyContent:"center", transition:"border-color .3s" }}>
+              {teacherListening
+                ? <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6, width:"100%" }}>
+                    <WaveBars active={true} color="#2d6a4f" count={28}/>
+                    {teacherTranscript && <p style={{ fontSize:12.5, color:"#6b7c6a", fontStyle:"italic", textAlign:"center" }}>"{teacherTranscript}"</p>}
+                  </div>
+                : input
+                  ? <p style={{ fontSize:14, color:"#3a4a38", lineHeight:1.7, fontStyle:"italic", textAlign:"center", width:"100%" }}>"{input}"</p>
+                  : <p style={{ fontSize:13, color:"#bbb5aa", textAlign:"center" }}>Tap the mic below and start teaching</p>}
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+              {input && !teacherListening && (
+                <button onClick={()=>{setInput("");setMicError("");}} style={{ background:"none", border:"1.5px solid #ddd8cf", borderRadius:8, padding:"7px 14px", fontSize:12, fontFamily:"'Outfit',sans-serif", color:"#9ba89a", cursor:"pointer" }}>Clear</button>
+              )}
+              <div style={{ position:"relative", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                {teacherListening && <>
+                  <div style={{ position:"absolute", width:74, height:74, borderRadius:"50%", border:"2px solid #2d6a4f44", animation:"pulseRing 1.4s infinite" }}/>
+                  <div style={{ position:"absolute", width:90, height:90, borderRadius:"50%", border:"2px solid #2d6a4f22", animation:"pulseRing 1.4s .55s infinite" }}/>
+                </>}
+                <button onClick={teacherListening?stopTeacherListening:startTeacherListening} disabled={loading}
+                  style={{ width:62, height:62, borderRadius:"50%", border:`2.5px solid ${teacherListening?"#2d6a4f":"#ddd8cf"}`, background:teacherListening?"#2d6a4f":"#fff", color:teacherListening?"#fff":"#9ba89a", cursor:loading?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:26, transition:"all .25s", position:"relative", zIndex:1, boxShadow:teacherListening?"0 0 28px #2d6a4f50":"none" }}>
+                  {teacherListening?"⏹":"🎙"}
+                </button>
+              </div>
+              {input && !teacherListening && (
+                <button disabled={loading} onClick={()=>sendMessage(input)}
+                  style={{ background:"#2d6a4f", border:"none", borderRadius:8, padding:"7px 20px", fontSize:13.5, fontFamily:"'Outfit',sans-serif", fontWeight:700, color:"#fff", cursor:loading?"not-allowed":"pointer", opacity:loading?0.45:1 }}>
+                  Send →
+                </button>
+              )}
+            </div>
+            <div style={{ fontSize:12, color:teacherListening?"#2d6a4f":"#9ba89a", fontWeight:teacherListening?600:400, textAlign:"center" }}>
+              {teacherListening?"🔴 Listening… tap ⏹ to stop":input?"✅ Tap Send or record more":"Tap 🎙 and start explaining"}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── REPORT SCREEN ───────────────────────────────────────────────────────────
+  if (screen==="report"&&report) {
+    const col = scoreColor(report.score);
+    return (
+      <div style={{ minHeight:"100vh", background:"#f4f1eb" }}>
+        <div style={{ maxWidth:640, margin:"0 auto", padding:"40px 20px 60px" }}>
+          <div style={{ display:"flex", gap:10, marginBottom:28, flexWrap:"wrap" }}>
+            <button onClick={()=>setScreen("chat")} style={bbtn()}>← Back to Chat</button>
+            <button onClick={exportPDF} style={{ background:"#fff", border:"1.5px solid #2d6a4f", color:"#2d6a4f", padding:"6px 14px", borderRadius:8, cursor:"pointer", fontSize:13, fontFamily:"'Outfit',sans-serif", fontWeight:600 }}>Export PDF</button>
+            <button onClick={()=>{setMessages([]);setReport(null);setScreen("setup");}} style={{ background:"#2d6a4f", border:"none", color:"#fff", padding:"6px 14px", borderRadius:8, cursor:"pointer", fontSize:13, fontFamily:"'Outfit',sans-serif", fontWeight:600, marginLeft:"auto" }}>New Session</button>
+          </div>
+          <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:"clamp(1.6rem,3.5vw,2.1rem)", fontWeight:700, marginBottom:4 }}>Lesson Clarity Report</h1>
+          <div style={{ fontSize:13, color:"#9ba89a", marginBottom:28 }}>{finalSubject} · {topic} · {grade?.label}</div>
+          <div style={{ background:"#fff", borderRadius:16, padding:"28px 24px", border:"1.5px solid #e8e2d8", display:"flex", alignItems:"center", gap:24, marginBottom:20, flexWrap:"wrap" }}>
+            <svg width={130} height={130} viewBox="0 0 130 130">
+              <circle cx={65} cy={65} r={54} fill="none" stroke="#f0f0ee" strokeWidth={11}/>
+              <circle cx={65} cy={65} r={54} fill="none" stroke={col} strokeWidth={11} strokeDasharray={circumference} strokeDashoffset={circumference-(circumference*scoreAnim/100)} strokeLinecap="round" transform="rotate(-90 65 65)" style={{ transition:"stroke-dashoffset 0.05s linear" }}/>
+              <text x={65} y={60} textAnchor="middle" fill={col} fontSize={28} fontWeight={700} fontFamily="Fraunces,serif">{scoreAnim}</text>
+              <text x={65} y={76} textAnchor="middle" fill="#9ba89a" fontSize={10} fontFamily="Outfit,sans-serif">/100</text>
+            </svg>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:20, fontWeight:700, color:col, fontFamily:"'Fraunces',serif", marginBottom:6 }}>{scoreLabel(report.score)}</div>
+              <div style={{ fontSize:13.5, color:"#6b7c6a", lineHeight:1.75 }}>{report.summary}</div>
+            </div>
+          </div>
+          <Section title="⚠️ Where Students Got Lost" color="#ef4444" delay=".15s">
+            <ul style={{ paddingLeft:18 }}>{report.confusion.map((c,i)=><li key={i} style={{ fontSize:13.5, lineHeight:1.8, marginBottom:4 }}>{c}</li>)}</ul>
+          </Section>
+          <Section title="✅ What You Did Well" color="#22c55e" delay=".2s">
+            <ul style={{ paddingLeft:18 }}>{report.strengths.map((s,i)=><li key={i} style={{ fontSize:13.5, lineHeight:1.8, marginBottom:4 }}>{s}</li>)}</ul>
+          </Section>
+          <Section title="🎯 Grade Level Fit" color="#f59e0b" delay=".25s">
+            <p style={{ fontSize:13.5, lineHeight:1.8 }}>{report.gradeFit}</p>
+          </Section>
+          <Section title="✏️ Improved Opening Explanation" color="#6366f1" delay=".3s">
+            <div style={{ fontStyle:"italic", background:"#fafaff", borderLeft:"4px solid #6366f1", padding:"12px 16px", fontSize:13.5, lineHeight:1.85, borderRadius:"0 8px 8px 0" }}>{report.improved}</div>
+          </Section>
+          <Section title="💡 Tips for Next Time" color="#2d6a4f" delay=".35s">
+            {[report.tip1,report.tip2].map((t,i)=>(
+              <div key={i} style={{ background:"#f0fdf4", borderRadius:9, padding:"10px 14px", marginBottom:8, fontSize:13.5, lineHeight:1.75 }}><strong style={{ color:"#2d6a4f" }}>{i+1}.</strong> {t}</div>
+            ))}
+          </Section>
+          <Section title="📝 Session Transcript" color="#9ba89a" delay=".4s">
+            <div style={{ maxHeight:280, overflowY:"auto", display:"flex", flexDirection:"column", gap:8 }}>
+              {messages.map((m,i)=>(
+                <div key={i} style={{ fontSize:13, lineHeight:1.7, color:m.role==="user"?"#1a5c3a":"#5a5a5a", fontStyle:m.role==="assistant"?"italic":"normal" }}>
+                  <strong>{m.role==="user"?"Teacher:":"Sam:"}</strong> {m.text}
+                </div>
+              ))}
+            </div>
+          </Section>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+// ── Style helpers ─────────────────────────────────────────────────────────────
+const inp = () => ({ background:"#fff", border:"1.5px solid #ddd8cf", borderRadius:10, padding:"11px 15px", fontSize:14.5, fontFamily:"'Outfit',sans-serif", color:"#1c2217", outline:"none", width:"100%" });
+const sel = (val) => ({ ...inp(), appearance:"none", backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 5 5-5z' fill='%23999'/%3E%3C/svg%3E\")", backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center", paddingRight:36, cursor:"pointer", color:val?"#1c2217":"#c5bfb5" });
+const bbtn = () => ({ background:"none", border:"1.5px solid #ddd8cf", color:"#6b7c6a", padding:"5px 11px", borderRadius:7, cursor:"pointer", fontSize:12, fontFamily:"'Outfit',sans-serif", fontWeight:500, whiteSpace:"nowrap" });
+
+// ── Gated root ────────────────────────────────────────────────────────────────
+function App() {
+  const [unlocked, setUnlocked] = useState(()=>sessionStorage.getItem("lcc_unlocked")==="1");
+  return unlocked ? <LessonClarityChecker/> : <AccessGate onUnlock={()=>setUnlocked(true)}/>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
