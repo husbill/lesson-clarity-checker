@@ -97,32 +97,30 @@ function AccessGate({ onUnlock }) {
   const [code, setCode]     = useState("");
   const [status, setStatus] = useState("idle");
   const [errMsg, setErrMsg] = useState("");
-
-  const check = async () => {
-    const trimmed = code.trim().toUpperCase();
-    if (!trimmed) return;
-    setStatus("checking"); setErrMsg("");
-    try {
-      const res  = await fetch(VALIDATOR_URL, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ code: trimmed }),
-      });
-      const data = await res.json();
-      if (data.valid) {
-        sessionStorage.setItem("lcc_unlocked","1");
-        sessionStorage.setItem("lcc_name", data.name || "Teacher");
-        onUnlock(data.name || "Teacher");
-      } else {
-        setStatus("error");
-        setErrMsg(data.reason === "revoked"
-          ? "This code has been deactivated. Please contact support."
-          : "Invalid code. Check your purchase email and try again.");
-      }
-    } catch (_) {
+const check = async () => {
+  const trimmed = code.trim().toUpperCase();
+  if (!trimmed) return;
+  setStatus("checking"); setErrMsg("");
+  try {
+    const res = await fetch(
+      VALIDATOR_URL + "?code=" + encodeURIComponent(trimmed)
+    );
+    const data = await res.json();
+    if (data.valid) {
+      sessionStorage.setItem("lcc_unlocked", "1");
+      sessionStorage.setItem("lcc_name", data.name || "Teacher");
+      onUnlock(data.name || "Teacher");
+    } else {
       setStatus("error");
-      setErrMsg("Connection error. Check your internet and try again.");
+      setErrMsg(data.reason === "revoked"
+        ? "This code has been deactivated. Please contact support."
+        : "Invalid code. Check your purchase email and try again.");
     }
-  };
+  } catch (_) {
+    setStatus("error");
+    setErrMsg("Connection error. Check your internet and try again.");
+  }
+};
 
   return (
     <div style={{ minHeight:"100vh", background:"#f4f1eb", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
