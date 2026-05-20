@@ -31,7 +31,7 @@
 const { useState, useRef, useEffect } = React;
 
 // ── PASTE YOUR APPS SCRIPT URL BELOW ────────────────────────────────────────
-const VALIDATOR_URL = "https://script.google.com/macros/s/AKfycbwxYm3KDN6uvqNcYMmzqrTsxFmBiDtBuWZzdM5lirzmjWSvEDK-2M0ep2oMS11DWm9vUA/exec";
+const VALIDATOR_URL = "https://script.google.com/macros/s/AKfycbzc1y4Vr2zlZNAICW7cNNeZR4Fr4chbxht-FaIszECaF1CEMY3IqEt91asYDS09gGz-hw/exec";
 // ────────────────────────────────────────────────────────────────────────────
 
 const GRADE_LEVELS = [
@@ -113,8 +113,12 @@ const check = async () => {
     } else {
       setStatus("error");
       setErrMsg(data.reason === "revoked"
-        ? "This code has been deactivated. Please contact support."
-        : "Invalid code. Check your purchase email and try again.");
+  ? "This code has been deactivated. Please contact support."
+  : data.reason === "expired"
+  ? "Your access has expired. Please renew your purchase."
+  : data.reason === "limit_reached"
+  ? "Too many devices. Email husbill2013@gmail.com to reset your access."
+  : "Invalid code. Check your purchase email and try again.");
     }
   } catch (_) {
     setStatus("error");
@@ -144,7 +148,7 @@ const check = async () => {
         </button>
         <p style={{ fontSize:11.5, color:"#bbb5aa", marginTop:18 }}>
           Don't have access?{" "}
-          <a href="https://selar.co/YOUR-PRODUCT-LINK" target="_blank" rel="noreferrer" style={{ color:"#2d6a4f", fontWeight:600, textDecoration:"none" }}>Get it here →</a>
+          <a href="https://selar.co/https://selar.com/34jl7h092n" target="_blank" rel="noreferrer" style={{ color:"#2d6a4f", fontWeight:600, textDecoration:"none" }}>Get it here →</a>
         </p>
       </div>
     </div>
