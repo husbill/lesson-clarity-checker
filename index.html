@@ -32,6 +32,9 @@ const { useState, useRef, useEffect } = React;
 
 // ── PASTE YOUR APPS SCRIPT URL BELOW ────────────────────────────────────────
 const VALIDATOR_URL = "https://script.google.com/macros/s/AKfycbziGZUl5H60T_wzDufft_wMsNM8frSVUKE4pdq8NmoFFyxQM1aIeolfwtDhuXlJw6sx9g/exec";
+// ── PASTE YOUR GEMINI API KEY BELOW ─────────────────────────────────────────
+const GEMINI_KEY = "AIzaSyB12egAKyOTLChLj5dqxe7qL92jLBi8_Vc";
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`;
 // ────────────────────────────────────────────────────────────────────────────
 
 const GRADE_LEVELS = [
@@ -97,34 +100,32 @@ function AccessGate({ onUnlock }) {
   const [code, setCode]     = useState("");
   const [status, setStatus] = useState("idle");
   const [errMsg, setErrMsg] = useState("");
-const check = async () => {
-  const trimmed = code.trim().toUpperCase();
-  if (!trimmed) return;
-  setStatus("checking"); setErrMsg("");
-  try {
-    const res = await fetch(
-      VALIDATOR_URL + "?code=" + encodeURIComponent(trimmed)
-    );
-    const data = await res.json();
-    if (data.valid) {
-      sessionStorage.setItem("lcc_unlocked", "1");
-      sessionStorage.setItem("lcc_name", data.name || "Teacher");
-      onUnlock(data.name || "Teacher");
-    } else {
+
+  const check = async () => {
+    const trimmed = code.trim().toUpperCase();
+    if (!trimmed) return;
+    setStatus("checking"); setErrMsg("");
+    try {
+      const res  = await fetch(VALIDATOR_URL, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ code: trimmed }),
+      });
+      const data = await res.json();
+      if (data.valid) {
+        sessionStorage.setItem("lcc_unlocked","1");
+        sessionStorage.setItem("lcc_name", data.name || "Teacher");
+        onUnlock(data.name || "Teacher");
+      } else {
+        setStatus("error");
+        setErrMsg(data.reason === "revoked"
+          ? "This code has been deactivated. Please contact support."
+          : "Invalid code. Check your purchase email and try again.");
+      }
+    } catch (_) {
       setStatus("error");
-      setErrMsg(data.reason === "revoked"
-  ? "This code has been deactivated. Please contact support."
-  : data.reason === "expired"
-  ? "Your access has expired. Please renew your purchase."
-  : data.reason === "limit_reached"
-  ? "Too many devices. Email husbill2013@gmail.com to reset your access."
-  : "Invalid code. Check your purchase email and try again.");
+      setErrMsg("Connection error. Check your internet and try again.");
     }
-  } catch (_) {
-    setStatus("error");
-    setErrMsg("Connection error. Check your internet and try again.");
-  }
-};
+  };
 
   return (
     <div style={{ minHeight:"100vh", background:"#f4f1eb", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
@@ -273,14 +274,22 @@ function LessonClarityChecker() {
     if (teacherListening) stopTeacherListening();
     const newMsgs = [...messages, {role:"user", text}];
     setMessages(newMsgs);
-    const apiMsgs = newMsgs.map(m=>({role:m.role==="user"?"user":"assistant", content:m.text}));
+    const apiMsgs = newMsgs.map(m=>({
+      role: m.role==="user" ? "user" : "model",
+      parts: [{ text: m.text }]
+    }));
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:200, system:makeStudentPrompt(grade, finalSubject, topic), messages:apiMsgs }),
+      const res = await fetch(GEMINI_URL, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: makeStudentPrompt(grade, finalSubject, topic) }] },
+          contents: apiMsgs,
+          generationConfig: { maxOutputTokens: 200 }
+        }),
       });
       const data = await res.json();
-      const reply = data.content?.[0]?.text || "Hmm...";
+      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Hmm...";
       setMessages(p=>[...p,{role:"assistant", text:reply}]);
       if (studentVoice) speakStudent(reply);
     } catch { setMessages(p=>[...p,{role:"assistant", text:"I'm confused..."}]); }
@@ -292,12 +301,17 @@ function LessonClarityChecker() {
     setReportLoading(true);
     const sessionText = messages.map(m=>`${m.role==="user"?"TEACHER":"STUDENT"}: ${m.text}`).join("\n");
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, system:makeReportPrompt(grade, finalSubject, topic), messages:[{role:"user",content:sessionText}] }),
+      const res = await fetch(GEMINI_URL, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: makeReportPrompt(grade, finalSubject, topic) }] },
+          contents: [{ role:"user", parts:[{ text: sessionText }] }],
+          generationConfig: { maxOutputTokens: 1000 }
+        }),
       });
       const data = await res.json();
-      const raw  = data.content?.[0]?.text || "";
+      const raw  = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const get  = (key) => { const m=raw.match(new RegExp(`${key}:([^\\n]*)`)); return m?m[1].trim():""; };
       const getList = (key) => { const m=raw.match(new RegExp(`${key}:[\\s\\S]*?(?=\\n[A-Z_]+:|$)`)); if(!m)return[]; return m[0].split("\n").slice(1).map(l=>l.replace(/^-\s*/,"").trim()).filter(Boolean); };
       setReport({ score:Math.min(100,Math.max(0,parseInt(get("SCORE"))||70)), summary:get("SUMMARY"), confusion:getList("CONFUSION"), strengths:getList("STRENGTHS"), gradeFit:get("GRADE_FIT"), improved:get("IMPROVED"), tip1:get("TIP_1"), tip2:get("TIP_2") });
